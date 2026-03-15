@@ -12,16 +12,15 @@
 # This parser has been validated on a large test set of BSDL files from Xilinx, Lattice, Altera,
 # other vendors.
 
-from typing import TYPE_CHECKING, cast, Literal, Self
+from typing import Literal
 from collections import defaultdict
-from dataclasses import dataclass, KW_ONLY, replace
+from dataclasses import dataclass, KW_ONLY
 import re
 
 try:
     from ..support.bits import bits
 except ImportError:
-    if not TYPE_CHECKING:
-        bits = lambda value, length: value
+    bits = lambda value, length: value
 
 
 __all__ = ["BSDLParseError", "BSDLPortInfo", "BSDLScanCell", "BSDLDevice", "BSDLEntity"]
@@ -42,7 +41,7 @@ class BSDLPortInfo:
 @dataclass
 class BSDLScanCell:
     kind:     str
-    port:     tuple[str, int] | None
+    port:     tuple[str, int]
     function: Literal["input", "output2", "output3", "control", "controlr", "internal",
                       "clock", "bidir", "observe_only"]
     safe:     int | None
@@ -87,9 +86,6 @@ class BSDLToken:
         column = self.offset - self.source.rfind("\n", 0, self.offset)
         return f"{self.kind} {self.value!r} at {self.src_name}, line {line}, column {column}"
 
-    def lower(self) -> Self:
-        return replace(self, value=self.value.lower())
-
 
 class BSDLLexer:
     _KEYWORDS = """
@@ -115,9 +111,9 @@ class BSDLLexer:
         re.DOTALL | re.IGNORECASE
     )
 
-    def __init__(self, source: str, src_name: str):
-        self._source   = source
+    def __init__(self, source, src_name):
         self._src_name = src_name
+        self._source   = source
         self._offset   = 0
 
     def __iter__(self):
@@ -137,7 +133,7 @@ class BSDLLexer:
 
 
 class BSDLParserBase:
-    def __init__(self, source: str, src_name: str):
+    def __init__(self, source, src_name):
         self._lexer = BSDLLexer(source, src_name)
 
     def _lex(self):
@@ -164,10 +160,7 @@ class BSDLParserBase:
 
 
 class BSDLPinMap(BSDLParserBase):
-    _pins:  dict[str, list[str]]
-    _ports: dict[str, tuple[str, int]]
-
-    def __init__(self, source: str, src_name: str):
+    def __init__(self, source, src_name):
         super().__init__(source, src_name)
 
         self._pins  = defaultdict(list)
@@ -223,8 +216,6 @@ class BSDLPinMap(BSDLParserBase):
 
 
 class BSDLOpcodeMap(BSDLParserBase):
-    _opcodes: dict[str, bits]
-
     def __init__(self, source, src_name):
         super().__init__(source, src_name)
 
@@ -262,8 +253,6 @@ class BSDLOpcodeMap(BSDLParserBase):
 
 
 class BSDLScanCellMap(BSDLParserBase):
-    _cells: list[tuple[int, BSDLScanCell]]
-
     def __init__(self, source, src_name):
         super().__init__(source, src_name)
 
@@ -292,9 +281,7 @@ class BSDLScanCellMap(BSDLParserBase):
                 case token:
                     raise BSDLParseError(f"expected '*' or port name, got {token}")
             match self._lex():
-                case BSDLToken("punct", "(") as token:
-                    if port is None:
-                        raise BSDLParseError(f"cannot subscript a null port ID, at {token}")
+                case BSDLToken("punct", "("):
                     port = (port, int(self._expect("integer")))
                     self._expect("punct", ")")
                     self._expect("punct", ",")
@@ -303,10 +290,10 @@ class BSDLScanCellMap(BSDLParserBase):
                         port = (port, 0)
                 case token:
                     raise BSDLParseError(f"expected ',' or port bit index, got {token}")
-            match self._lex().lower():
-                case BSDLToken("ident", "input" | "output2" | "output3" | "control" | "controlr" |
-                               "internal" | "clock" | "bidir" | "observe_only" as function):
-                    pass
+            match self._lex():
+                case BSDLToken("ident", "INPUT" | "OUTPUT2" | "OUTPUT3" | "CONTROL" | "CONTROLR" |
+                               "INTERNAL" | "CLOCK" | "BIDIR" | "OBSERVE_ONLY" as function):
+                    function = function.lower()
                 case token:
                     raise BSDLParseError(f"expected scan cell function, got {token}")
             self._expect("punct", ",")
@@ -341,12 +328,6 @@ class BSDLScanCellMap(BSDLParserBase):
 
 
 class BSDLEntity(BSDLParserBase):
-    _name:   str | None
-    _params: dict[str, str]
-    _ports:  dict[str, tuple[Literal["in", "out", "inout", "buffer", "linkage"], range]]
-    _attrs:  dict[str, str | int]
-    _consts: dict[str, str | int]
-
     def __init__(self, source, src_name):
         super().__init__(source, src_name)
 
@@ -389,9 +370,9 @@ class BSDLEntity(BSDLParserBase):
                         names.append(self._expect("ident"))
                     case BSDLToken("punct", ":"):
                         break
-            match self._lex().lower():
-                case BSDLToken("keyword", "in" | "out" | "inout" | "buffer" | "linkage" as kind):
-                    pass
+            match self._lex():
+                case BSDLToken("keyword", "IN" | "OUT" | "INOUT" | "BUFFER" | "LINKAGE" as kind):
+                    kind = kind.lower()
                 case token:
                     raise BSDLParseError(f"expected port direction, got {token}")
             match self._lex():
@@ -485,33 +466,28 @@ class BSDLEntity(BSDLParserBase):
                 case token:
                     raise BSDLParseError(f"cannot parse {token}")
 
-    def _extract_attribute[T](self, name: str, ty: type[T]) -> T:
+    def _extract_attribute(self, name):
         if name not in self._attrs:
             raise BSDLParseError(f"expected {name!r} attribute to be defined")
-        value = self._attrs[name]
-        assert isinstance(value, ty)
-        return value
+        return self._attrs[name]
 
-    def _extract_constant[T](self, name: str, ty: type[T]) -> T:
+    def _extract_constant(self, name):
         if name not in self._consts:
             raise BSDLParseError(f"expected {name!r} constant to be defined")
-        value = self._consts[name]
-        assert isinstance(value, ty)
-        return value
+        return self._consts[name]
 
     def device(self) -> BSDLDevice:
-        pin_map_name = self._extract_attribute("PIN_MAP", str)
-        pin_map = BSDLPinMap(self._extract_constant(pin_map_name, str),
+        pin_map_name = self._extract_attribute("PIN_MAP")
+        pin_map = BSDLPinMap(self._extract_constant(pin_map_name),
                              f"{pin_map_name}: PIN_MAP_STRING")
 
-        ir_length = self._extract_attribute("INSTRUCTION_LENGTH", int)
-        opcode_map = BSDLOpcodeMap(self._extract_attribute("INSTRUCTION_OPCODE", str),
+        ir_length = self._extract_attribute("INSTRUCTION_LENGTH")
+        opcode_map = BSDLOpcodeMap(self._extract_attribute("INSTRUCTION_OPCODE"),
                                    "INSTRUCTION_OPCODE")
 
-        port_cells: dict[str, set[int]] = defaultdict(set)
-        bscan_cells: list[None | BSDLScanCell] = \
-            [None] * self._extract_attribute("BOUNDARY_LENGTH", int)
-        bscan_cell_map = BSDLScanCellMap(self._extract_attribute("BOUNDARY_REGISTER", str),
+        port_cells = defaultdict(set)
+        bscan_cells = [None] * self._extract_attribute("BOUNDARY_LENGTH")
+        bscan_cell_map = BSDLScanCellMap(self._extract_attribute("BOUNDARY_REGISTER"),
                                          "BOUNDARY_REGISTER")
         for index, cell in bscan_cell_map.cells:
             assert bscan_cells[index] is None
@@ -520,14 +496,13 @@ class BSDLEntity(BSDLParserBase):
                 port, _port_bit = cell.port
                 port_cells[port].add(index)
 
-        idcode, idcode_mask = self._extract_attribute("IDCODE_REGISTER", str), None
+        idcode, idcode_mask = self._attrs.get("IDCODE_REGISTER"), None
         if idcode is not None:
             # using integers here reverses the bit order compared to strings,
             # so we have to reverse the idcode string to compensate
-            idcode_mask = bits.from_iter(0 if bit in "X" else 1 for bit in idcode[::-1])
-            idcode = bits.from_iter(0 if bit in "X0" else 1 for bit in idcode[::-1])
+            idcode_mask = bits(0 if bit == "X" else 1 for bit in idcode[::-1])
+            idcode = bits(0 if bit == "X" else int(bit) for bit in idcode[::-1])
 
-        assert self._name is not None
         return BSDLDevice(
             name=self._name,
             ports={
@@ -535,13 +510,13 @@ class BSDLEntity(BSDLParserBase):
                     kind=kind,
                     pins=pin_map._pins[port],
                     range=range_,
-                    cells=list(port_cells[port])
+                    cells=port_cells[port]
                 )
                 for port, (kind, range_) in self._ports.items()
             },
             ir_length=ir_length,
             ir_values=opcode_map.opcodes,
-            scan_cells=cast(list[BSDLScanCell], bscan_cells),
+            scan_cells=bscan_cells,
             idcode_match=idcode,
             idcode_mask=idcode_mask
         )

@@ -7,12 +7,10 @@ from amaranth import *
 from amaranth.lib import io
 from amaranth.sim import Simulator
 
-from glasgow.abstract import (AbstractAssembly, AbstractInOutPipe, AbstractInPipe, AbstractOutPipe,
-                              AbstractRORegister, AbstractRWRegister,
-                              GlasgowPin, GlasgowPort, GlasgowVio, PullState)
+from ..abstract import *
 
 
-__all__ = ["SimulationPipe", "SimulationRORegister", "SimulationRWRegister", "SimulationAssembly"]
+__all__ = ["SimulationPipe", "SimulationRegister", "SimulationAssembly"]
 
 
 logger = logging.getLogger(__name__)
@@ -98,7 +96,7 @@ class SimulationAssembly(AbstractAssembly):
         self.__context = None
 
     @property
-    def sys_clk_period(self) -> float: # TODO: migrate to `amaranth.hdl.Period`
+    def sys_clk_period(self) -> "Period":
         # Reduced from 36 or 48 MHz to 1 MHz to improve test performance.
         return 1/1000000
 
@@ -143,7 +141,6 @@ class SimulationAssembly(AbstractAssembly):
             i_buffer = bytearray()
             async def i_testbench(ctx):
                 nonlocal i_buffer
-                assert i_buffer is not None
                 timer = 0
                 packet = bytearray()
                 ctx.set(in_stream.ready, 1)
@@ -185,7 +182,7 @@ class SimulationAssembly(AbstractAssembly):
     def add_rw_register(self, signal) -> AbstractRWRegister:
         return SimulationRWRegister(self, signal)
 
-    def add_submodule(self, elaboratable, *, name: str | None = None) -> Elaboratable:
+    def add_submodule(self, elaboratable, *, name=None) -> Elaboratable:
         self._modules.append((elaboratable, name))
         return elaboratable
 

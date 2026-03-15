@@ -76,12 +76,6 @@ class Progress:
         (and so on until completion)
     """
 
-    _total: int | None
-    _done: int
-    _action: str
-    _item: str | None
-    _scale: Literal[1, 1000, 1024]
-
     def __init__(self, *,
         total: int | None = None,
         action: str,
@@ -106,7 +100,6 @@ class Progress:
         All keyword arguments not explicitly declared are passed to the class constructor. Returns
         a :term:`python:generator` yielding the result of indexing slices of :py:`items` up to
         :py:`chunk_size` in length, and advancing progress whenever control is returned.
-        If :py:`len(items) <= chunk_size`, progress indication is omitted entirely.
 
         To split a byte array into chunks of up to :py:`chunk_size`, such as for a write
         operation, use:
@@ -131,16 +124,10 @@ class Progress:
             Avoid passing :class:`bytes` or :class:`bytearray` values as :py:`items`; wrap them
             in :class:`memoryview` so that chunks reference the original bytes instead of copying.
         """
-        if len(items) <= chunk_size:
-            # Avoid creating nuisance progress bars for very small collections.
-            yield items
-        else:
-            with cls(**kwargs, total=len(items)) as progress:
-                for start in range(0, len(items), chunk_size):
-                    chunk = items[start:start + chunk_size]
-                    assert isinstance(chunk, type(items))
-                    yield chunk
-                    progress.advance(len(chunk))
+        with cls(**kwargs, total=len(items)) as progress:
+            for start in range(0, len(items), chunk_size):
+                yield items[start:start + chunk_size]
+                progress.advance(chunk_size)
 
     @property
     def action(self) -> str:
@@ -229,7 +216,7 @@ class AbstractProgressImpl(metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def update(self, progress: Progress, count: int):
+    def update(self, progress: Progress):
         ...
 
 
@@ -243,19 +230,19 @@ class TqdmProgressImpl(AbstractProgressImpl):
         self._orig_stderr, sys.stderr = sys.stderr, DummyTqdmFile(sys.stderr)
         # https://github.com/tqdm/tqdm/pull/1719
         self._orig_format_sizeof, tqdm.format_sizeof = tqdm.format_sizeof, \
-            lambda num, suffix="", divisor=1000.0: \
+            lambda num, divisor=1000: \
                 self._orig_format_sizeof(num, "i" if divisor == 1024 else "", divisor)
 
     def unregister(self):
         Progress._impl = self._orig_impl
-        sys.stdout = self._orig_stdout
-        sys.stderr = self._orig_stderr
+        sys.stdout = self._prog_stdout
+        sys.stderr = self._prog_stderr
         tqdm.format_sizeof = self._orig_format_sizeof
 
     def open(self, progress: Progress):
         self._bars[progress] = tqdm(
             desc=progress.action,
-            unit=progress.item or "it", # explicit default to work around tqdm typing issue
+            unit=progress.item,
             unit_scale=True if progress.scale != 1 else False,
             unit_divisor=progress.scale,
             total=float("+inf") if progress.total is None else progress.total,

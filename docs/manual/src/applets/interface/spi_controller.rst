@@ -15,6 +15,4 @@ API reference
 
 .. module:: glasgow.applet.interface.spi_controller
 
-.. autoexception:: SPIControllerError
-
 .. autoclass:: SPIControllerInterface
